@@ -8,6 +8,7 @@ import unittest
 from unittest.mock import Mock, patch
 
 from bridge import ATTACHMENT_NOTICE, Bridge, RouteError, factory_body, native_body, visible_archive
+from factory import FactoryError, require_standard
 from gateway import Gateway, GatewayError, Turn, tool_catalog
 
 THREAD = "01234567-89ab-cdef-0123-456789abcdef"
@@ -36,6 +37,9 @@ class History(unittest.TestCase):
                        record("response_item", message("user", "earlier user message")),
                        record("response_item", {"item": CALL}), record("response_item", OUTPUT),
                        record("response_item", {**OUTPUT, "call_id": "orphan"}),
+                       record("event_msg", {"type": "item_completed", "item": {
+                           "type": "CommandExecution", "command": ["/bin/cat", "scratch.txt"],
+                           "aggregated_output": "captured by Codex", "exit_code": 0}}),
                        record("response_item", {"type": "reasoning", "encrypted_content": "private"}),
                        record("compacted", {"replacement_history": [CHECKPOINT]})]
             path = diary / f"rollout-example-{THREAD}.jsonl"
@@ -48,6 +52,7 @@ class History(unittest.TestCase):
             self.assertNotIn("orphan", str(transformed))
             self.assertNotIn("encrypted", str(transformed))
             self.assertNotIn("private", str(transformed))
+            self.assertIn("captured by Codex", str(transformed))
 
     def test_earlier_image_placeholder_and_opaque_state(self):
         image = {"type": "input_image", "image_url": "data:image/png;base64,test"}
@@ -72,6 +77,15 @@ class History(unittest.TestCase):
 
 
 class Relay(unittest.TestCase):
+    def test_standard_requires_every_window_and_extra_usage_off(self):
+        windows = [{"windowMinutes": minutes, "usedPercent": 10} for minutes in (300, 10080, 43200)]
+        allowance = {"overagePreference": "droidCore", "extraUsageBalance": "0.00", "windows": windows}
+        require_standard(allowance)
+        with self.assertRaises(FactoryError):
+            require_standard({**allowance, "windows": windows[:-1]})
+        with self.assertRaises(FactoryError):
+            require_standard({**allowance, "extraUsageBalance": "1.00"})
+
     def test_tool_catalog_keeps_namespace_function_and_freeform(self):
         schema = {"type": "object", "properties": {"query": {"type": "string"}}}
         catalog = tool_catalog([{"type": "namespace", "name": "project", "tools": [
@@ -101,9 +115,10 @@ class Relay(unittest.TestCase):
 
     def test_duplicate_turn_id_fails_before_second_start(self):
         with tempfile.TemporaryDirectory() as name, Gateway(0, Path(name)) as gateway:
-            window = {"usedPercent": 10}
             info = {"default_reasoning_level": "low", "_factory_efforts": {"low": "low"}}
-            quota = {"overagePreference": "droidCore", "extraUsageBalance": "0.00", "windows": [window] * 3}
+            quota = {"overagePreference": "droidCore", "extraUsageBalance": "0.00",
+                     "windows": [{"windowMinutes": minutes, "usedPercent": 10}
+                                 for minutes in (300, 10080, 43200)]}
             with patch.object(gateway, "eligible_models", return_value={"example": info}), \
                     patch.object(gateway, "quota", return_value=quota), patch("gateway.threading.Thread"):
                 first = gateway.start_turn({"model": "example"}, thread_id=THREAD, turn_id="turn-a")

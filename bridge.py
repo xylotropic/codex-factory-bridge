@@ -2,6 +2,7 @@
 """Merge Factory into the signed Codex catalog and route its Responses requests."""
 
 import argparse
+from collections import deque
 from compression import zstd
 from hashlib import sha256
 from http.client import HTTPConnection, HTTPSConnection, HTTPException
@@ -18,7 +19,8 @@ PREFIX = "factory/"
 UPSTREAM = "chatgpt.com"
 UPSTREAM_PREFIX = "/backend-api/codex"
 MAX_REQUEST = 12 * 1024 * 1024
-ARCHIVE_BUDGET = 96 * 1024
+ARCHIVE_BUDGET = 256 * 1024
+TOOL_RECORD_BUDGET = 16 * 1024
 THREAD_ID = re.compile(r"[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}")
 CHECKPOINTS = {"compaction", "context_compaction"}
 NATIVE_ENDPOINTS = {"models", "responses", "responses/compact", "alpha/search"}
@@ -115,11 +117,59 @@ def portable_tool(item):
     return clean
 
 
+def completed_tool_event(payload):
+    if payload.get("type") != "item_completed":
+        return None
+    item = payload.get("item", {})
+    kind = item.get("type")
+    if kind == "CommandExecution":
+        output = item.get("aggregated_output")
+        if not isinstance(output, str) or not output:
+            return None
+        return {"type": "codex_tool_history", "tool": "command execution",
+                "command": item.get("command"), "status": item.get("status"),
+                "exit_code": item.get("exit_code"), "output": output}
+    if kind not in {"McpToolCall", "DynamicToolCall", "FunctionCallOutput"}:
+        return None
+    result = item.get("result") or {}
+    content = result.get("content", item.get("content_items", item.get("output")))
+    if isinstance(content, list):
+        content = [
+            part["text"] for part in content if isinstance(part, dict)
+            and part.get("type") in TEXT_PARTS | {"inputText", "text"}
+            and isinstance(part.get("text"), str)
+        ]
+    if not content or not isinstance(content, (list, str)):
+        return None
+    return {"type": "codex_tool_history", "tool": item.get("tool") or item.get("name"),
+            "namespace": item.get("server") or item.get("namespace"), "status": item.get("status"),
+            "arguments": item.get("arguments"), "output": content}
+
+
+def archive_size(item):
+    return len(json.dumps(item, ensure_ascii=False).encode())
+
+
+def clip_tool_record(item):
+    if archive_size(item) <= TOOL_RECORD_BUDGET:
+        return item, False
+    clipped = dict(item)
+    for field in ("output", "input", "arguments", "tools", "command"):
+        value = clipped.get(field)
+        if value is None or archive_size(value) <= 4096:
+            continue
+        blob = (value if isinstance(value, str) else json.dumps(value, ensure_ascii=False)).encode()
+        clipped[field] = (blob[:1800].decode(errors="ignore") + "\n[Archived tool detail clipped.]\n"
+                          + blob[-1800:].decode(errors="ignore"))
+    return clipped, True
+
+
 def visible_archive(home, thread_id, marker):
     messages = []
-    size = 0
+    tools = deque()
+    message_size = tool_size = omitted_tools = clipped_tools = 0
     calls = set()
-    for record in archive_records(home, thread_id):
+    for index, record in enumerate(archive_records(home, thread_id)):
         kind, payload = record.get("type"), record.get("payload", {})
         if kind == "event_msg" and payload.get("type") == "thread_rolled_back":
             raise RouteError("This conversation contains a rollback that cannot yet be replayed in Factory.")
@@ -127,22 +177,43 @@ def visible_archive(home, thread_id, marker):
             checkpoint_keys(entry.get("item", entry)) & marker
             for entry in payload.get("replacement_history") or []
         ):
-            if size > ARCHIVE_BUDGET:
+            if message_size > ARCHIVE_BUDGET:
                 raise RouteError("The saved readable message history exceeds the Factory replay limit.")
-            if not any(message["role"] == "user" for message in messages):
+            if not any(message["role"] == "user" for _, message in messages):
                 raise RouteError("The saved checkpoint contains no readable user history.")
-            return messages
+            reconstructed = sorted([*messages, *((ordinal, entry) for ordinal, entry, _ in tools)])
+            if omitted_tools or clipped_tools:
+                reconstructed.append((index, {"type": "codex_replay_note",
+                    "text": (f"Factory replay omitted {omitted_tools} earlier tool records and clipped "
+                             f"{clipped_tools} large tool records to fit its context budget.")}))
+            return [entry for _, entry in reconstructed]
         if kind == "response_item":
             item = payload.get("item", payload)
             message = readable_message(item) or portable_tool(item)
-            if message:
-                if message["type"].endswith("_call"):
-                    calls.add(message["call_id"])
-                if message["type"].endswith("_output") and message["call_id"] not in calls:
-                    continue
-                size += len(json.dumps(message, ensure_ascii=False).encode())
-                if size <= ARCHIVE_BUDGET:
-                    messages.append(message)
+        elif kind == "event_msg":
+            message = completed_tool_event(payload)
+        else:
+            message = None
+        if not message:
+            continue
+        if message["type"] == "message":
+            message_size += archive_size(message)
+            if message_size <= ARCHIVE_BUDGET:
+                messages.append((index, message))
+        else:
+            if message["type"].endswith("_call"):
+                calls.add(message["call_id"])
+            if message["type"].endswith("_output") and message["call_id"] not in calls:
+                continue
+            message, clipped = clip_tool_record(message)
+            size = archive_size(message)
+            clipped_tools += clipped
+            tools.append((index, message, size))
+            tool_size += size
+        while tools and message_size + tool_size > ARCHIVE_BUDGET:
+            _, _, dropped = tools.popleft()
+            tool_size -= dropped
+            omitted_tools += 1
     raise RouteError("Codex could not match the saved compaction checkpoint for Factory replay.")
 
 

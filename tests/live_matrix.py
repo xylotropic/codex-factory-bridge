@@ -175,6 +175,10 @@ def choose_effort(model, row):
                 row["defaultReasoningEffort"])
 
 
+def same_effort(picker, receipt):
+    return picker == receipt or (picker == "none" and receipt == "off")
+
+
 def receipts(gateway):
     path = gateway.state / "receipts.jsonl"
     return [json.loads(line) for line in path.read_text().splitlines()] if path.exists() else []
@@ -208,7 +212,7 @@ def test_model(app, gateway, workspace, thread, context, model, row):
     if len(proof) != 1:
         raise RuntimeError("Expected exactly one verified Factory receipt.")
     proof = proof[0]
-    if proof["model"] != model.removeprefix("factory/") or proof["effort"] != effort:
+    if proof["model"] != model.removeprefix("factory/") or not same_effort(effort, proof["effort"]):
         raise RuntimeError("The receipt model or effort is different from the picker setting.")
     if context not in answer or marker not in answer or proof["codexToolCalls"] < 1:
         raise RuntimeError("Earlier context or the real Codex tool result was missing from the answer.")
@@ -244,8 +248,13 @@ def feature_roundtrip(app, home, workspace, mcp_marker):
     if tool_marker in answer or "stored" not in answer.lower():
         raise RuntimeError("The native reply did not isolate the old tool output.")
     path, = (home / "sessions").glob(f"*/*/*/rollout-*{thread}.jsonl")
-    if tool_marker not in path.read_text():
+    records = [json.loads(line) for line in path.read_text().splitlines() if tool_marker in line]
+    if not records:
         raise RuntimeError("The actual native Codex tool result is absent from the local journal.")
+    for record in records:
+        item = record["payload"].get("item", record["payload"])
+        emit(check="fixture-marker-record", recordType=record["type"], itemType=item.get("type"),
+             fields=sorted(item))
     app.compact(thread)
     seen = []
     route = bridge_module.factory_body

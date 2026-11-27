@@ -99,9 +99,12 @@ def read_allowance(directory):
 
 
 def require_standard(allowance):
+    windows = allowance.get("windows", [])
+    if [window.get("windowMinutes") for window in windows] != [minutes for _, minutes in WINDOWS.values()]:
+        raise FactoryError("Droid did not verify all three Factory Standard limits.")
     if allowance["overagePreference"] != "droidCore" or allowance["extraUsageBalance"] != "0.00":
         raise FactoryError("Factory must show Droid Core at exhaustion and a $0.00 Extra Usage balance.")
-    if any(window["usedPercent"] >= 100 for window in allowance["windows"]):
+    if any(window["usedPercent"] >= 100 for window in windows):
         raise FactoryError("A Factory Standard limit is exhausted.")
 
 

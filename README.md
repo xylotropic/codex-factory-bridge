@@ -2,7 +2,7 @@
 
 Use models from your signed-in Factory Standard plan in the macOS Codex Desktop model picker. Choose a Factory model in an existing local chat and switch back to GPT from the same picker.
 
-This is an independent, experimental integration. It runs two local services and launches the original signed Codex executable with a per-process endpoint setting. Factory handles model inference through your local Droid CLI. Codex owns the chat, tools, workspace and approvals.
+This is an independent, experimental integration. It runs two local services and launches the original signed Codex executable with a per-process endpoint setting. Factory handles model inference through your local Droid CLI. Codex owns the chat, tools, workspace and approvals. The reference account passed live context and tool checks on 78 Factory models. [Model matrix](docs/model-matrix.md)
 
 ## Install on macOS
 
@@ -42,6 +42,7 @@ The live test uses the signed Codex app server, real Factory credits and synthet
 ```sh
 export FACTORY_LIMITS_DIR="$HOME/Library/Application Support/Codex Factory Bridge/droid"
 python3.14 tests/live_matrix.py --approvals
+python3.14 tests/live_matrix.py --features
 python3.14 tests/live_matrix.py --all
 ```
 
