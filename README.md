@@ -25,6 +25,10 @@ droid
 
 Return to the checkout, quit ChatGPT Desktop, then run `python3.14 setup.py launch`. Open your local chat from the sidebar or pass a saved `codex://threads/…` app link with `--thread`. Choose a model ending in **· Factory**. Opus 5.5 and Fable 5.2 default to Max when the account offers it. The model list reflects your account and can change.
 
+The launcher adds the Factory catalog to local Codex chats on this Mac that use the OpenAI provider. Regular ChatGPT chats, cloud Codex chats, and chats on another machine use their own model catalogs. A model choice applies to a new turn. Messages added while a turn is running can steer the model that already started it.
+
+When Codex exposes its subagent tools in a local chat, a Factory parent can ask Codex to start a native GPT child. Pick Fable 5.2 and send “Use one GPT-6.2 Sol subagent with a fresh context for this review. Wait for its result.” The parent uses Factory Standard and the native child uses the OpenAI route.
+
 Open the [local quota dashboard](http://127.0.0.1:17382/) or run `python3.14 setup.py status` for the independent 5-hour, 7-day and 30-day Standard windows and reset times.
 
 ### Give it to an agent
@@ -43,6 +47,7 @@ The live test uses the signed Codex app server, real Factory credits and synthet
 export FACTORY_LIMITS_DIR="$HOME/Library/Application Support/Codex Factory Bridge/droid"
 python3.14 tests/live_matrix.py --approvals
 python3.14 tests/live_matrix.py --features
+python3.14 tests/live_matrix.py --subagents claude-fable-5.2
 python3.14 tests/live_matrix.py --all
 ```
 

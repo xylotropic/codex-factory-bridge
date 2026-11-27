@@ -142,8 +142,8 @@ def launch(thread_url=None):
         target = urlsplit(thread_url)
         if target.scheme != "codex" or target.netloc != "threads":
             raise RuntimeError("Use a codex://threads/ link from the Codex app.")
-    args = ["/usr/bin/open", "-a", APP, "--env", f"CODEX_CLI_PATH={ROOT / 'signed-codex'}",
-            "--env", f"FACTORY_CODEX_BINARY={BINARY}", "--env", f"FACTORY_CODEX_PORT={BRIDGE_PORT}"]
+    args = ["/usr/bin/open", "-a", APP, "--env",
+            f"CODEX_APP_SERVER_OPENAI_BASE_URL={uri(BRIDGE_PORT, '/v1')}"]
     run(*args, *([thread_url] if thread_url else []))
 
 

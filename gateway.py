@@ -40,6 +40,7 @@ PREFERRED_EFFORTS = {"claude-opus-5-5": "max", "claude-fable-5.2": "max"}
 REJECTED_EFFORTS = {"mistral-large-4": {"off"}}
 DISCOVERED_TOOL = "call_discovered_codex_tool"
 OUTPUT_TYPES = {"function_call_output", "custom_tool_call_output", "tool_search_output"}
+PLAINTEXT_AGENT_MESSAGE_TOOLS = {"spawn_agent", "send_message", "followup_task"}
 
 
 class GatewayError(Exception):
@@ -76,6 +77,25 @@ def tool_catalog(raw):
                     "input": {"type": "string"}}, "required": ["input"]},
             }
     return result
+
+
+def response_tool_item(call_id, tool, arguments):
+    item = {"id": "fc_factory_" + secrets.token_hex(12), "call_id": call_id,
+            "name": tool["name"], "status": "completed"}
+    if tool["kind"] == "custom":
+        item.update(type="custom_tool_call", input=arguments["input"])
+    elif tool["kind"] == "tool_search":
+        item.pop("name")
+        item.update(type="tool_search_call", execution="client", arguments=arguments)
+    else:
+        item.update(type="function_call", arguments=json.dumps(arguments))
+    if namespace := tool.get("namespace"):
+        item["namespace"] = namespace
+        if namespace == "collaboration" and tool["name"] in PLAINTEXT_AGENT_MESSAGE_TOOLS:
+            # Codex interprets an empty array as a plaintext inter-agent message.
+            # Omitting it would make the child treat the message as provider ciphertext.
+            item["encrypted_function_args"] = []
+    return item
 
 
 def factory_prompt(request, tools):
@@ -658,18 +678,7 @@ class Handler(BaseHTTPRequestHandler):
                            "error": {"code": "invalid_prompt", "message": payload}})
                 return
             if kind == "tool":
-                call_id, tool, arguments = payload
-                item = {"id": "fc_factory_" + secrets.token_hex(12), "call_id": call_id,
-                        "name": tool["name"], "status": "completed"}
-                if tool["kind"] == "custom":
-                    item.update(type="custom_tool_call", input=arguments["input"])
-                elif tool["kind"] == "tool_search":
-                    item.pop("name")
-                    item.update(type="tool_search_call", execution="client", arguments=arguments)
-                else:
-                    item.update(type="function_call", arguments=json.dumps(arguments))
-                if tool.get("namespace"):
-                    item["namespace"] = tool["namespace"]
+                item = response_tool_item(*payload)
                 self.event("response.output_item.added", output_index=0, item=item)
             else:
                 text, usage = payload

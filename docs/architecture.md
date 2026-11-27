@@ -11,7 +11,7 @@ Signed Codex desktop backend
                                              '-- Codex tool relay'
 ```
 
-The launcher uses `CODEX_CLI_PATH` to run the bundled signed executable through `signed-codex`. The wrapper supplies `openai_base_url` to the app server for this launch. The app server remains responsible for loading, saving and changing models in the chat. Native WebSocket requests fall back to HTTP event streams through the bridge.
+The launcher sets `CODEX_APP_SERVER_OPENAI_BASE_URL` for this launch. Desktop applies the endpoint to its bundled signed app server while keeping its normal CLI and Local Work startup. The app server remains responsible for loading, saving and changing models in the chat. Native WebSocket requests fall back to HTTP event streams through the bridge.
 
 `bridge.py` handles the merged catalog, signed-in Codex session verification and provider routing. The two services bind to IPv4 loopback and check Host and Origin. The OpenAI bearer token goes to a fixed OpenAI destination. The local Factory gateway uses a randomly generated file token with owner-only permissions. Each Droid run gets its own temporary, unguessable MCP capability. Tool results are matched to outstanding calls and their Codex chat. Codex still evaluates commands, file changes and permission requests.
 

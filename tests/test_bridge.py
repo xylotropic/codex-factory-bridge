@@ -9,7 +9,8 @@ from unittest.mock import Mock, patch
 
 from bridge import ATTACHMENT_NOTICE, Bridge, RouteError, factory_body, native_body, visible_archive
 from factory import FactoryError, require_standard
-from gateway import Gateway, GatewayError, Turn, tool_catalog
+from gateway import Gateway, GatewayError, Turn, response_tool_item, tool_catalog
+import setup
 
 THREAD = "01234567-89ab-cdef-0123-456789abcdef"
 CALL = {"type": "function_call", "call_id": "call_abc", "name": "exec_command",
@@ -75,8 +76,16 @@ class History(unittest.TestCase):
         self.assertNotIn("previous_response_id", body)
         self.assertEqual(body["input"], [message("assistant", "Factory result")])
 
-
 class Relay(unittest.TestCase):
+    def test_collaboration_only_marks_plaintext_message_arguments(self):
+        for name in ("spawn_agent", "send_message", "followup_task"):
+            spec = {"kind": "function", "name": name, "namespace": "collaboration"}
+            self.assertEqual(response_tool_item("call1", spec, {})["encrypted_function_args"], [])
+            self.assertNotIn("encrypted_function_args",
+                             response_tool_item("call2", {**spec, "namespace": "other"}, {}))
+        wait = {"kind": "function", "name": "wait_agent", "namespace": "collaboration"}
+        self.assertNotIn("encrypted_function_args", response_tool_item("call3", wait, {}))
+
     def test_standard_requires_every_window_and_extra_usage_off(self):
         windows = [{"windowMinutes": minutes, "usedPercent": 10} for minutes in (300, 10080, 43200)]
         allowance = {"overagePreference": "droidCore", "extraUsageBalance": "0.00", "windows": windows}
@@ -140,6 +149,17 @@ def listening(server):
 
 
 class LocalEndpoints(unittest.TestCase):
+    def test_desktop_launch_keeps_bundled_cli_and_new_work_startup(self):
+        target = "codex://threads/" + THREAD + "?hostId=local"
+        with patch.object(setup, "check_prerequisites"), \
+                patch.object(setup, "get", return_value={"status": "ready"}), \
+                patch.object(setup, "run", return_value=Mock(returncode=1)) as launched:
+            setup.launch(target)
+        args = launched.call_args.args
+        self.assertIn("CODEX_APP_SERVER_OPENAI_BASE_URL=http://127.0.0.1:17383/v1", args)
+        self.assertFalse(any("CODEX_CLI_PATH" in str(argument) for argument in args))
+        self.assertEqual(args[-1], target)
+
     def test_browser_origin_and_unauthorized_catalog_are_rejected(self):
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory)

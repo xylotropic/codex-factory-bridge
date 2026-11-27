@@ -18,7 +18,7 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 import bridge as bridge_module
 from bridge import Bridge
-from gateway import Gateway
+from gateway import Gateway, tool_catalog
 from factory import require_standard
 
 STOCK = Path("/Applications/ChatGPT.app/Contents/Resources/codex-cli/CodexCLI.app/Contents/MacOS/codex")
@@ -286,6 +286,68 @@ def feature_roundtrip(app, home, workspace, mcp_marker):
     emit(check="codex-mcp-tool", status="pass")
 
 
+def subagent_roundtrip(app, home, workspace, gateway, parent):
+    thread, context = seed(app, workspace, "read-only")
+    marker = "sol-child-" + secrets.token_hex(8)
+    specs, children, tool_results, child_results = [], [], [], []
+    rewrite = bridge_module.factory_body
+    native = bridge_module.native_body
+
+    def observe(body, archive, identifier):
+        if identifier == thread:
+            specs.extend(name for name in tool_catalog(body.get("tools", [])) if "agent" in name)
+            for item in body.get("input", []):
+                if item.get("type") == "function_call_output":
+                    tool_results.append(str(item.get("output", ""))[:240])
+                if item.get("type") == "agent_message" and str(item.get("author", "")).endswith("/sol_probe"):
+                    if marker in json.dumps(item.get("content", [])):
+                        child_results.append("completed")
+        return rewrite(body, archive, identifier)
+
+    def observe_native(body):
+        if body.get("model") == NATIVE and marker in json.dumps(body.get("input", [])):
+            children.append(body.get("model"))
+        return native(body)
+
+    bridge_module.factory_body = observe
+    bridge_module.native_body = observe_native
+    count = len(receipts(gateway))
+    try:
+        answer = app.turn(thread, parent, "low", (
+            "I explicitly authorize you to spawn one native Codex subagent. Use spawn_agent with "
+            'model "gpt-6.2-sol", reasoning_effort "low" and fork_turns "none" when supported. '
+            'If task_name is required, set it to "sol_probe". The entire child task is to reply '
+            f"with the exact string {marker}. Wait for its actual result. If the child errors, "
+            "report the error instead of guessing. In your answer repeat "
+            "the child's exact reply and the code word you remember from the first message."))
+    finally:
+        bridge_module.factory_body = rewrite
+        bridge_module.native_body = native
+    evidence = []
+    for path in (home / "sessions").glob("*/*/*/rollout-*.jsonl"):
+        rows = [json.loads(line) for line in path.read_text().splitlines() if line]
+        meta = rows[0].get("payload", {})
+        if meta.get("id") == thread:
+            continue
+        model = [row["payload"].get("model") for row in rows if row["type"] == "turn_context"]
+        child_output = [row["payload"].get("item", row["payload"]) for row in rows
+                        if row["type"] == "response_item"]
+        child_output = [item for item in child_output if item.get("role") == "assistant"]
+        if NATIVE in model and marker in json.dumps(child_output):
+            evidence.append(meta.get("id"))
+    billed = receipts(gateway)[count:]
+    if (not children or not (evidence or child_results) or
+            marker not in answer or context not in answer or len(billed) != 1
+            or billed[0]["model"] != parent.removeprefix("factory/") or billed[0]["codexToolCalls"] < 1):
+        raise RuntimeError(f"Native subagent proof failed. Codex agent tools: {sorted(set(specs))}. "
+                           f"Native child requests: {len(children)}. Sol child journals: {len(evidence)}. "
+                           f"Completed child responses relayed to parent: {len(child_results)}. "
+                           f"Observed tool results: {list(dict.fromkeys(tool_results))}. "
+                           f"Factory receipts: {[row['codexToolCalls'] for row in billed]}.")
+    emit(check="native-sol-subagent", parent=parent, child=NATIVE, relayedTools=billed[0]["codexToolCalls"],
+         status="pass")
+
+
 def run(args, home, workspace, gateway):
     app = Codex(args.binary, home)
     failures = []
@@ -297,7 +359,7 @@ def run(args, home, workspace, gateway):
         if set(offered) != gateway_models or not offered:
             raise RuntimeError("Factory gateway and signed Codex picker catalogs did not match.")
         explicit = ["factory/" + model.removeprefix("factory/") for model in args.model]
-        selected = sorted(offered) if args.all else explicit or list(MAX_MODELS)
+        selected = sorted(offered) if args.all else explicit or ([] if args.subagents else list(MAX_MODELS))
         if args.shard:
             number, total = args.shard
             selected = selected[number - 1::total]
@@ -309,6 +371,8 @@ def run(args, home, workspace, gateway):
             approval_roundtrip(app, workspace)
         if args.features:
             feature_roundtrip(app, home, workspace, args.mcp_marker)
+        if args.subagents:
+            subagent_roundtrip(app, home, workspace, gateway, "factory/" + args.subagents)
         for index, model in enumerate(selected):
             if index % 6 == 0:
                 thread, marker = seed(app, workspace, "read-only")
@@ -338,6 +402,10 @@ def main():
                         help="Run a 1-based shard of the selected model list")
     parser.add_argument("--approvals", action="store_true", help="Also test accept/deny and return to native GPT")
     parser.add_argument("--features", action="store_true", help="Also test compacted tool history and a local MCP tool")
+    parser.add_argument("--subagents", metavar="FACTORY_MODEL",
+                        help="Test the given Factory parent spawning a native GPT-6.2 Sol subagent")
+    parser.add_argument("--subagent-backend", choices=("v1", "v2"), default="v2",
+                        help="Select the Codex agent tools used by the subagent test")
     parser.add_argument("--binary", type=Path, default=STOCK)
     args = parser.parse_args()
     if args.shard and not 1 <= args.shard[0] <= args.shard[1]:
@@ -363,7 +431,10 @@ def main():
                     f'model = "{NATIVE}"\nmodel_provider = "openai"\n'
                     f'openai_base_url = "{bridge.origin}/v1"\n'
                     'cli_auth_credentials_store = "file"\nmcp_oauth_credentials_store = "file"\n'
-                    '[features]\napps = false\nplugins = false\n' + mcp)
+                    '[features]\napps = false\nplugins = false\n' +
+                    ("multi_agent = true\nmulti_agent_v2 = " +
+                     ("true" if args.subagent_backend == "v2" else "false") + "\n"
+                     if args.subagents else "") + mcp)
                 return run(args, home, workspace, gateway)
 
 
