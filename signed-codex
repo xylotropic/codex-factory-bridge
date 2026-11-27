@@ -1,0 +1,14 @@
+#!/bin/sh
+set -eu
+
+stock=${FACTORY_CODEX_BINARY:-/Applications/ChatGPT.app/Contents/Resources/codex-cli/CodexCLI.app/Contents/MacOS/codex}
+port=${FACTORY_CODEX_PORT:-17383}
+case "$port" in
+    ''|*[!0-9]*) exit 2 ;;
+esac
+for argument do
+    if [ "$argument" = app-server ]; then
+        exec "$stock" -c "openai_base_url=\"http://127.0.0.1:$port/v1\"" "$@"
+    fi
+done
+exec "$stock" "$@"

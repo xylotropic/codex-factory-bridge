@@ -1,0 +1,57 @@
+{
+  "default_reasoning_level": "max",
+  "supported_reasoning_levels": [
+    {
+      "effort": "low",
+      "description": "Fast responses with lighter reasoning"
+    },
+    {
+      "effort": "medium",
+      "description": "Balances speed and reasoning depth for everyday tasks"
+    },
+    {
+      "effort": "high",
+      "description": "Greater reasoning depth for complex problems"
+    },
+    {
+      "effort": "xhigh",
+      "description": "Extra high reasoning depth for complex problems"
+    },
+    {
+      "effort": "max",
+      "description": "Maximum reasoning depth for the hardest problems"
+    }
+  ],
+  "shell_type": "unified_exec",
+  "visibility": "list",
+  "supported_in_api": true,
+  "priority": 1,
+  "service_tiers": [],
+  "include_skills_usage_instructions": false,
+  "include_plugin_usage_instructions": false,
+  "include_apps_usage_instructions": false,
+  "default_reasoning_summary": "none",
+  "support_verbosity": true,
+  "default_verbosity": "low",
+  "apply_patch_tool_type": "freeform",
+  "web_search_tool_type": "text_and_image",
+  "truncation_policy": {
+    "mode": "tokens",
+    "limit": 10000
+  },
+  "supports_image_detail_original": true,
+  "context_window": 200000,
+  "max_context_window": 200000,
+  "effective_context_window_percent": 95,
+  "experimental_supported_tools": [],
+  "input_modalities": [
+    "text"
+  ],
+  "supports_search_tool": false,
+  "supports_experimental_context": false,
+  "use_responses_lite": false,
+  "supports_reasoning_effort_updates": true,
+  "node_repl_disabled": false,
+  "tool_mode": null,
+  "base_instructions": "You are a coding assistant working in Codex. Follow the user instructions and use the supplied Codex tools when they are needed."
+}

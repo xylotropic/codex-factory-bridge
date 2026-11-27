@@ -1,0 +1,122 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Factory Standard usage</title>
+<style>
+  :root { color-scheme: light dark; font-family: system-ui, -apple-system, sans-serif;
+    background: #131713; color: #f3f5ec; --muted:#b9c1b1; --panel:#1b221d;
+    --line:#364039; --accent:#c5ef89; }
+  * { box-sizing:border-box; }
+  body { margin:0; }
+  main { max-width:44rem; padding:clamp(1.25rem,6vw,3.5rem); margin:5vh auto; }
+  header { display:flex; align-items:center; gap:1rem; justify-content:space-between; }
+  h1 { font-size:clamp(1.65rem,5vw,2.65rem); font-weight:650; letter-spacing:-.045em;
+    line-height:1.05; margin:0; }
+  button { color:inherit; background:transparent; border:1px solid var(--line); border-radius:8px;
+    font:inherit; padding:.55rem .8rem; cursor:pointer; }
+  button:disabled { cursor:progress; opacity:.7; }
+  button:focus-visible { outline:2px solid var(--accent); outline-offset:4px; }
+  #status { color:var(--muted); min-height:1.5em; margin:1rem 0 1.3rem; font-size:.92rem; }
+  #status[data-error] { color:#ffd48d; }
+  ul { list-style:none; padding:0; margin:0; border-radius:14px; border:1px solid var(--line);
+    background:var(--panel); }
+  li { padding:1.05rem 1.25rem; }
+  li+li { border-top:1px solid var(--line); }
+  li>div { display:flex; align-items:baseline; justify-content:space-between; gap:.4rem; }
+  .percent { font-variant-numeric:tabular-nums; white-space:nowrap; }
+  .reset { color:var(--muted); margin:.55rem 0 0; font-size:.86rem; }
+  progress { width:100%; height:.45rem; display:block; margin:.75rem 0 0; appearance:none;
+    border:0; background:var(--line); border-radius:12px; overflow:hidden; }
+  progress::-webkit-progress-bar { background:var(--line); }
+  progress::-webkit-progress-value { background:var(--accent); }
+  progress::-moz-progress-bar { background:var(--accent); }
+  footer { margin-top:1.15rem; color:var(--muted); font-size:.88rem; line-height:1.5; }
+  @media (prefers-color-scheme:light) {
+    :root { background:#f3f6ed; color:#182016; --muted:#465545; --panel:#fafcf7;
+      --line:#cdd8c9; --accent:#27713e; }
+    #status[data-error] { color:#834514; }
+  }
+</style>
+</head>
+<body>
+<main>
+  <header>
+    <h1>Factory Standard usage</h1>
+    <button type="button" id="refresh">Refresh</button>
+  </header>
+  <p id="status" role="status" aria-live="polite">Reading usage from Factory…</p>
+  <ul id="windows" aria-label="Rolling usage windows">
+    <li><div><strong>5 hours</strong><span class="percent">—</span></div></li>
+    <li><div><strong>7 days</strong><span class="percent">—</span></div></li>
+    <li><div><strong>30 days</strong><span class="percent">—</span></div></li>
+  </ul>
+  <footer id="billing"></footer>
+</main>
+<script>
+  const status = document.querySelector('#status');
+  const refresh = document.querySelector('#refresh');
+  const rows = [...document.querySelectorAll('#windows li')];
+  const billing = document.querySelector('#billing');
+  let previous;
+
+  function show(data, stale = false) {
+    data.windows.forEach((window, index) => {
+      const row = rows[index];
+      if (!row || typeof window.usedPercent !== 'number') return;
+      row.querySelector('.percent').textContent = window.usedPercent + '% used';
+      let meter = row.querySelector('progress');
+      if (!meter) {
+        meter = document.createElement('progress');
+        meter.max = 100;
+        meter.setAttribute('aria-label', window.label + ' used');
+        row.append(meter);
+      }
+      meter.value = window.usedPercent;
+      let reset = row.querySelector('.reset');
+      if (!reset) {
+        reset = document.createElement('p');
+        reset.className = 'reset';
+        row.append(reset);
+      }
+      reset.textContent = window.resetsIn ? 'Reset in ' + window.resetsIn : '';
+    });
+    const time = new Date(data.observedAt).toLocaleTimeString([], {hour: 'numeric', minute: '2-digit'});
+    status.toggleAttribute('data-error', stale);
+    status.textContent = stale ? 'Refresh failed. Showing the last reading from ' + time + '.'
+      : 'Read from Factory at ' + time + '.';
+    const preference = data.overagePreference === 'droidCore' ? 'Droid Core at the limit' : 'Review overage in Factory';
+    billing.textContent = preference + ' · $' + data.extraUsageBalance + ' Extra Usage balance';
+  }
+
+  async function update(force = false) {
+    if (refresh.disabled) return;
+    refresh.disabled = true;
+    try {
+      const response = await fetch(force ? '/quota?refresh=1' : '/quota', {
+        cache: 'no-store', signal: AbortSignal.timeout(16000)
+      });
+      const data = await response.json();
+      if (!response.ok || data.windows.length !== 3) throw new Error('Quota unavailable');
+      previous = data;
+      show(data, Boolean(data.error) || data.ageSeconds > 120);
+    } catch {
+      if (previous) show(previous, true);
+      else {
+        status.setAttribute('data-error', '');
+        status.textContent = 'Factory usage is unavailable. Try refreshing.';
+      }
+    } finally {
+      refresh.disabled = false;
+    }
+  }
+  refresh.addEventListener('click', () => update(true));
+  document.addEventListener('visibilitychange', () => {
+    if (!document.hidden) update();
+  });
+  update();
+  setInterval(() => { if (!document.hidden) update(); }, 60000);
+</script>
+</body>
+</html>
